@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="fr" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CueScore - Tournois & Matchs</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <!-- React & React DOM CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Google Fonts Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+          },
+          colors: {
+            billiard: {
+              50: '#f0fdf4',
+              100: '#dcfce7',
+              500: '#22c55e',
+              600: '#16a34a',
+              700: '#15803d',
+              800: '#166534',
+              900: '#0f3a24',
+              950: '#071d12',
+            },
+            felt: {
+              dark: '#080f0c',
+              card: '#11221a',
+              border: '#1f3a2d',
+              accent: '#10b981'
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body {
+      background-color: #070d0a;
+      color: #e2e8f0;
+      font-family: 'Inter', sans-serif;
+    }
+
+    .glass-panel {
+      background: rgba(17, 34, 26, 0.85);
+      backdrop-filter: blur(14px);
+      border: 1px solid rgba(31, 58, 45, 0.85);
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #070d0a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1f3a2d;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #10b981;
+    }
+
+    .custom-gradient-text {
+      background: linear-gradient(135deg, #34d399 0%, #10b981 50%, #3b82f6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    @keyframes pulse-emerald {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.85; transform: scale(1.02); }
+    }
+    .badge-live {
+      animation: pulse-emerald 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-slate-100 antialiased selection:bg-emerald-500 selection:text-slate-950">
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // Liste des tournois préconfigurés (IDs officiels)
+    const KNOWN_TOURNAMENTS = [
+      {
+        id: "88770526",
+        name: "Bretagne - Blackball - DR4C - Equipes",
+        organizer: "Ligue de Billard de Bretagne (FFB)"
+      }
+    ];
+
+    function parseCueScoreJson(rawData) {
+      if (!rawData || typeof rawData !== 'object') {
+        throw new Error("Format JSON invalide ou vide.");
+      }
+
+      // 1. Informations Tournoi
+      const tObj = rawData.tournament || rawData.data || rawData;
+      const tId = tObj.id || rawData.id || "";
+      
+      const tournamentInfo = {
+        id: tId,
+        name: tObj.name || tObj.title || rawData.name || `Tournoi #${tId}`,
+        organizer: tObj.organizer || tObj.club || tObj.association || "Organisateur CueScore",
+        venue: tObj.venue || tObj.location || tObj.place || "Lieu non précisé",
+        city: tObj.city || tObj.placename || tObj.address || "",
+        discipline: tObj.discipline || tObj.game || tObj.type || "Billard",
+        startDate: tObj.startDate || tObj.start_date || "",
+        endDate: tObj.endDate || tObj.end_date || "",
+        cuescoreUrl: tObj.cuescoreUrl || tObj.url || `https://cuescore.com/tournament/?id=${tId}`
+      };
+
+      // 2. Extraire la liste brute des matchs
+      let rawMatches = [];
+      if (Array.isArray(rawData.matches)) {
+        rawMatches = rawData.matches;
+      } else if (Array.isArray(rawData.games)) {
+        rawMatches = rawData.games;
+      } else if (Array.isArray(rawData)) {
+        rawMatches = rawData;
+      } else if (rawData.rounds && Array.isArray(rawData.rounds)) {
+        rawData.rounds.forEach(r => {
+          if (Array.isArray(r.matches)) rawMatches.push(...r.matches);
+        });
+      }
+
+      // 3. Normaliser les matchs
+      const normalizedMatches = rawMatches.map((m, index) => {
+        const matchId = m.id || m.matchId || `match-${index}`;
+        const cuescoreMatchUrl = m.cuescoreUrl || m.url || `https://cuescore.com/match/?matchId=${matchId}`;
+
+        const pA = m.playerA || m.team1 || {};
+        const teamAName = pA.name || m.playerA_name || m.team1name || m.player1name || "Équipe A";
+        const teamAId = pA.teamId || pA.id || m.team1Id || null;
+        const teamAUrl = pA.url || (teamAId ? `https://cuescore.com/team/${encodeURIComponent(teamAName)}/${teamAId}` : `https://cuescore.com/search?q=${encodeURIComponent(teamAName)}`);
+        const playerAName = pA.player || m.player1?.name || m.p1_name || "";
+
+        const pB = m.playerB || m.team2 || {};
+        const teamBName = pB.name || m.playerB_name || m.team2name || m.player2name || "Équipe B";
+        const teamBId = pB.teamId || pB.id || m.team2Id || null;
+        const teamBUrl = pB.url || (teamBId ? `https://cuescore.com/team/${encodeURIComponent(teamBName)}/${teamBId}` : `https://cuescore.com/search?q=${encodeURIComponent(teamBName)}`);
+        const playerBName = pB.player || m.player2?.name || m.p2_name || "";
+
+        const tableObj = m.table || {};
+        const venueObj = tableObj.venue || m.venue || {};
+
+        const tableName = tableObj.name || (tableObj.tableId ? `Table ${tableObj.tableId}` : (m.location || "Table d'arbitrage"));
+        const venueName = venueObj.name || (typeof m.venue === 'string' ? m.venue : (tournamentInfo.venue || "Salle Principale"));
+        const placename = venueObj.placename || tournamentInfo.city || "";
+        const address = venueObj.address || (placename ? `${venueName}, ${placename}` : venueName);
+
+        const scoreA = m.scoreA !== undefined ? Number(m.scoreA) : (m.score1 !== undefined ? Number(m.score1) : 0);
+        const scoreB = m.scoreB !== undefined ? Number(m.scoreB) : (m.score2 !== undefined ? Number(m.score2) : 0);
+
+        const starttime = m.starttime || m.start_time || m.dateTime || m.date || "";
+
+        const isFinished = m.finished === true || m.finished === 1 || m.finished === "1" || m.status === "finished";
+        const isRunning = m.status === "running" || m.status === "in_progress" || m.status === "live";
+
+        let status = "upcoming";
+        if (isFinished) status = "finished";
+        else if (isRunning) status = "running";
+
+        return {
+          id: matchId,
+          cuescoreUrl: cuescoreMatchUrl,
+          roundName: m.roundName || m.round_name || m.round || (m.round ? `Round ${m.round}` : "Match"),
+          starttime: starttime,
+          table: {
+            id: tableObj.tableId || null,
+            name: tableName,
+            venue: {
+              id: venueObj.venueId || null,
+              name: venueName,
+              placename: placename,
+              address: address
+            }
+          },
+          playerA: {
+            id: teamAId,
+            name: teamAName,
+            url: teamAUrl,
+            player: playerAName
+          },
+          playerB: {
+            id: teamBId,
+            name: teamBName,
+            url: teamBUrl,
+            player: playerBName
+          },
+          scoreA: scoreA,
+          scoreB: scoreB,
+          finished: isFinished,
+          status: status
+        };
+      });
+
+      return {
+        tournament: tournamentInfo,
+        matches: normalizedMatches
+      };
+    }
+
+    function formatFrenchDateTime(dateString) {
+      if (!dateString) return { dateStr: "Date non communiquée", timeStr: "--:--", rawDate: null };
+      
+      const parsed = new Date(dateString);
+      if (isNaN(parsed.getTime())) {
+        return { dateStr: dateString, timeStr: "--:--", rawDate: null };
+      }
+
+      const dateStr = parsed.toLocaleDateString('fr-FR', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      });
+
+      const formattedDate = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+
+      const timeStr = parsed.toLocaleTimeString('fr-FR', {
+        hour: '2-digit',
+        minute: '2-digit'
+      }).replace(':', 'h');
+
+      return {
+        dateStr: formattedDate,
+        timeStr: timeStr,
+        rawDate: parsed
+      };
+    }
+
+    function App() {
+      // États principaux
+      const [knownTournaments, setKnownTournaments] = useState(KNOWN_TOURNAMENTS);
+      const [currentTournamentId, setCurrentTournamentId] = useState("88770526");
+      const [customIdInput, setCustomIdInput] = useState("");
+      const [data, setData] = useState(null);
+      const [isLoadingTournament, setIsLoadingTournament] = useState(false);
+      const [apiError, setApiError] = useState(null);
+      const [apiSuccessMsg, setApiSuccessMsg] = useState(null);
+
+      // Équipe favorite enregistrée en localStorage
+      const [favTeam, setFavTeam] = useState(() => {
+        return localStorage.getItem('cuescore_fav_team') || "THORIGNE FOUILLARD 7 DR4";
+      });
+      
+      // Filtre d'équipe actuellement actif
+      const [selectedTeam, setSelectedTeam] = useState(favTeam);
+
+      const [selectedVenue, setSelectedVenue] = useState("");
+      const [selectedPlayer, setSelectedPlayer] = useState("");
+      const [selectedStatus, setSelectedStatus] = useState("ALL");
+      const [searchTerm, setSearchTerm] = useState("");
+      const [viewMode, setViewMode] = useState("grid"); // 'grid' | 'timeline'
+
+      // Modale
+      const [selectedMatchModal, setSelectedMatchModal] = useState(null);
+
+      // Auto-résolution intelligente du nom de l'équipe à partir des données chargées
+      useEffect(() => {
+        if (data && data.matches && favTeam) {
+          const cleanFav = favTeam.trim().toLowerCase();
+          const teamsSet = new Set();
+          data.matches.forEach(m => {
+            if (m.playerA?.name) teamsSet.add(m.playerA.name);
+            if (m.playerB?.name) teamsSet.add(m.playerB.name);
+          });
+          const allTeams = Array.from(teamsSet);
+          // Match exact ou partiel
+          const match = allTeams.find(t => t.toLowerCase().includes(cleanFav) || cleanFav.includes(t.toLowerCase()));
+          if (match) {
+            setSelectedTeam(match);
+          } else {
+            setSelectedTeam(favTeam);
+          }
+        }
+      }, [data, favTeam]);
+
+      const handleTeamChange = (teamName) => {
+        setSelectedTeam(teamName);
+      };
+
+      const toggleFavoriteTeam = (teamName) => {
+        if (!teamName) return;
+        if (favTeam === teamName) {
+          localStorage.removeItem('cuescore_fav_team');
+          setFavTeam("");
+        } else {
+          localStorage.setItem('cuescore_fav_team', teamName);
+          setFavTeam(teamName);
+        }
+      };
+
+      const handleResetFilters = () => {
+        setSelectedTeam(""); // Réinitialise l'affichage sans détruire le favori en localStorage !
+        setSelectedVenue("");
+        setSelectedPlayer("");
+        setSelectedStatus("ALL");
+        setSearchTerm("");
+      };
+
+      const handleApplyFavorite = () => {
+        if (!favTeam) return;
+        const cleanFav = favTeam.trim().toLowerCase();
+        const match = availableTeams.find(t => t.toLowerCase().includes(cleanFav) || cleanFav.includes(t.toLowerCase()));
+        setSelectedTeam(match || favTeam);
+      };
+
+      const loadTournamentById = async (idToLoad) => {
+        if (!idToLoad) return;
+        const cleanId = idToLoad.toString().trim();
+        setCurrentTournamentId(cleanId);
+        setIsLoadingTournament(true);
+        setApiError(null);
+        setApiSuccessMsg(null);
+
+        const targetUrl = `https://api.cuescore.com/tournament/?id=${encodeURIComponent(cleanId)}`;
+        const fetchUrls = [
+          targetUrl,
+          `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+          `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+        ];
+
+        let loadedData = null;
+
+        for (const url of fetchUrls) {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+            const res = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+
+            if (res.ok) {
+              const json = await res.json();
+              if (json && (json.id || json.tournament || json.matches || Array.isArray(json))) {
+                loadedData = parseCueScoreJson(json);
+                break;
+              }
+            }
+          } catch (e) {
+            // Passer au suivant en cas d'erreur réseau / CORS
+          }
+        }
+
+        if (loadedData) {
+          setData(loadedData);
+          setApiSuccessMsg(`Données chargées en direct depuis l'API CueScore (Tournoi #${cleanId} - ${loadedData.matches.length} matchs trouvés).`);
+        } else {
+          setData(null);
+          setApiError(`Impossible de récupérer les données pour le tournoi #${cleanId}. L'API distante n'a pas répondu ou l'identifiant est inexistant.`);
+        }
+
+        setIsLoadingTournament(false);
+      };
+
+      // Chargement initial
+      useEffect(() => {
+        loadTournamentById("88770526");
+      }, []);
+
+      const handleAddCustomId = (e) => {
+        e.preventDefault();
+        if (customIdInput.trim()) {
+          loadTournamentById(customIdInput.trim());
+          setCustomIdInput("");
+        }
+      };
+
+      // Listes uniques pour les filtres
+      const availableTeams = useMemo(() => {
+        if (!data || !data.matches) return [];
+        const teamsSet = new Set();
+        data.matches.forEach(m => {
+          if (m.playerA?.name) teamsSet.add(m.playerA.name);
+          if (m.playerB?.name) teamsSet.add(m.playerB.name);
+        });
+        if (selectedTeam) teamsSet.add(selectedTeam);
+        return Array.from(teamsSet).sort();
+      }, [data, selectedTeam]);
+
+      const availableVenues = useMemo(() => {
+        if (!data || !data.matches) return [];
+        const venueSet = new Set();
+        data.matches.forEach(m => {
+          const vName = m.table?.venue?.name;
+          const pName = m.table?.venue?.placename;
+          if (vName) {
+            venueSet.add(pName ? `${vName} (${pName})` : vName);
+          }
+        });
+        return Array.from(venueSet).sort();
+      }, [data]);
+
+      const availablePlayers = useMemo(() => {
+        if (!data || !data.matches) return [];
+        const playersSet = new Set();
+        data.matches.forEach(m => {
+          const inTeamA = !selectedTeam || m.playerA?.name === selectedTeam;
+          const inTeamB = !selectedTeam || m.playerB?.name === selectedTeam;
+
+          if (inTeamA && m.playerA?.player) playersSet.add(m.playerA.player);
+          if (inTeamB && m.playerB?.player) playersSet.add(m.playerB.player);
+        });
+        return Array.from(playersSet).sort();
+      }, [data, selectedTeam]);
+
+      const filteredMatches = useMemo(() => {
+        if (!data || !data.matches) return [];
+
+        return data.matches
+          .filter(match => {
+            if (selectedTeam) {
+              const cleanTeam = selectedTeam.trim().toLowerCase();
+              const teamAName = (match.playerA?.name || "").trim().toLowerCase();
+              const teamBName = (match.playerB?.name || "").trim().toLowerCase();
+
+              const isTeamA = teamAName.includes(cleanTeam) || cleanTeam.includes(teamAName);
+              const isTeamB = teamBName.includes(cleanTeam) || cleanTeam.includes(teamBName);
+
+              if (!isTeamA && !isTeamB) return false;
+            }
+
+            if (selectedVenue) {
+              const vName = match.table?.venue?.name || "";
+              const pName = match.table?.venue?.placename || "";
+              const combined = pName ? `${vName} (${pName})` : vName;
+              if (combined !== selectedVenue && !vName.includes(selectedVenue)) return false;
+            }
+
+            if (selectedPlayer) {
+              const isPlayerA = match.playerA?.player === selectedPlayer;
+              const isPlayerB = match.playerB?.player === selectedPlayer;
+              if (!isPlayerA && !isPlayerB) return false;
+            }
+
+            if (selectedStatus !== "ALL") {
+              if (match.status !== selectedStatus) return false;
+            }
+
+            if (searchTerm.trim() !== "") {
+              const term = searchTerm.toLowerCase();
+              const matchText = `
+                ${match.playerA?.name || ''} ${match.playerA?.player || ''} 
+                ${match.playerB?.name || ''} ${match.playerB?.player || ''} 
+                ${match.table?.venue?.name || ''} ${match.table?.venue?.placename || ''} 
+                ${match.table?.venue?.address || ''} ${match.table?.name || ''} ${match.roundName || ''}
+              `.toLowerCase();
+              if (!matchText.includes(term)) return false;
+            }
+
+            return true;
+          })
+          .sort((a, b) => {
+            const timeA = new Date(a.starttime).getTime() || 0;
+            const timeB = new Date(b.starttime).getTime() || 0;
+            return timeA - timeB;
+          });
+      }, [data, selectedTeam, selectedVenue, selectedPlayer, selectedStatus, searchTerm]);
+
+      const stats = useMemo(() => {
+        if (!data || !data.matches) return { total: 0, upcoming: 0, running: 0, finished: 0 };
+        return {
+          total: data.matches.length,
+          upcoming: data.matches.filter(m => m.status === 'upcoming').length,
+          running: data.matches.filter(m => m.status === 'running').length,
+          finished: data.matches.filter(m => m.status === 'finished').length
+        };
+      }, [data]);
+
+      return (
+        <div className="min-h-screen flex flex-col bg-[#070d0a] text-slate-100">
+          
+          {/* Header */}
+          <header className="sticky top-0 z-40 bg-[#0b1712]/95 backdrop-blur-md border-b border-felt-border shadow-2xl">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-4">
+              
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-700 flex items-center justify-center shadow-lg shadow-emerald-950 text-slate-950 font-black text-xl">
+                  <i className="fa-solid fa-bowling-ball"></i>
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold tracking-tight custom-gradient-text">CueScore Explorer</h1>
+                  <p className="text-xs text-slate-400">Consultation des tournois & compétitions de billard</p>
+                </div>
+              </div>
+
+              {data?.tournament?.id && (
+                <a
+                  href={`https://cuescore.com/tournament/?id=${data.tournament.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3.5 py-2 text-xs sm:text-sm font-semibold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 transition flex items-center space-x-2 shadow"
+                >
+                  <i className="fa-solid fa-arrow-up-right-from-square"></i>
+                  <span className="hidden sm:inline">Voir sur</span>
+                  <span>CueScore.com</span>
+                </a>
+              )}
+
+            </div>
+          </header>
+
+          {/* Contenu principal */}
+          <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+            
+            {/* Sélection du tournoi */}
+            <section className="glass-panel rounded-2xl p-4 sm:p-5 shadow-2xl relative z-30">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                
+                <div className="flex-1 space-y-1.5">
+                  <label className="block text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                    <i className="fa-solid fa-trophy mr-1.5"></i>
+                    Sélectionner un tournoi
+                  </label>
+                  <select
+                    value={currentTournamentId}
+                    onChange={(e) => loadTournamentById(e.target.value)}
+                    disabled={isLoadingTournament}
+                    className="w-full bg-slate-900 border border-felt-border rounded-xl px-3.5 py-2.5 text-sm font-semibold text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-inner disabled:opacity-50"
+                  >
+                    {knownTournaments.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        [#{t.id}] {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <form onSubmit={handleAddCustomId} className="space-y-1.5 md:w-80">
+                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                    <i className="fa-solid fa-magnifying-glass mr-1 text-emerald-400"></i>
+                    Interroger un ID CueScore
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="text"
+                      value={customIdInput}
+                      onChange={(e) => setCustomIdInput(e.target.value)}
+                      placeholder="Ex: 88770526"
+                      className="w-full bg-slate-900 border border-felt-border rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!customIdInput.trim() || isLoadingTournament}
+                      className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-slate-950 font-bold rounded-xl text-xs whitespace-nowrap transition"
+                    >
+                      {isLoadingTournament ? <i className="fa-solid fa-spinner fa-spin"></i> : "Charger"}
+                    </button>
+                  </div>
+                </form>
+
+              </div>
+
+              {/* Messages de Statut & Erreur */}
+              {isLoadingTournament && (
+                <div className="mt-3 p-3 bg-emerald-950/40 border border-emerald-800/50 rounded-xl text-emerald-300 text-xs flex items-center space-x-2 animate-pulse">
+                  <i className="fa-solid fa-spinner fa-spin text-emerald-400"></i>
+                  <span>Interrogation de l'API CueScore pour le tournoi #{currentTournamentId}...</span>
+                </div>
+              )}
+
+              {apiError && !isLoadingTournament && (
+                <div className="mt-3 p-3 bg-red-950/80 border border-red-800 rounded-xl text-red-200 text-xs flex items-center space-x-2">
+                  <i className="fa-solid fa-circle-xmark text-red-400 text-base"></i>
+                  <span className="font-medium">{apiError}</span>
+                </div>
+              )}
+
+              {apiSuccessMsg && !apiError && !isLoadingTournament && (
+                <div className="mt-3 p-3 bg-emerald-950/70 border border-emerald-800/80 rounded-xl text-emerald-200 text-xs flex items-center space-x-2">
+                  <i className="fa-solid fa-circle-check text-emerald-400 text-sm"></i>
+                  <span>{apiSuccessMsg}</span>
+                </div>
+              )}
+            </section>
+
+            {/* Bannière du Tournoi Chargé */}
+            {data && data.tournament && (
+              <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-felt-card via-[#12281d] to-felt-card border border-felt-border p-6 shadow-xl">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                  
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="px-2.5 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-800 rounded-md text-xs font-semibold uppercase">
+                        {data.tournament.discipline || "Billard"}
+                      </span>
+                      <span className="px-2.5 py-0.5 bg-slate-800 text-slate-300 border border-slate-700 rounded-md text-xs font-mono">
+                        ID: #{data.tournament.id}
+                      </span>
+                    </div>
+
+                    <h2 className="text-2xl sm:text-3xl font-extrabold text-white">
+                      {data.tournament.name}
+                    </h2>
+
+                    <div className="flex flex-wrap items-center gap-y-2 gap-x-5 text-xs sm:text-sm text-slate-300">
+                      {data.tournament.organizer && (
+                        <span className="flex items-center space-x-1.5">
+                          <i className="fa-solid fa-sitemap text-emerald-400"></i>
+                          <span>{data.tournament.organizer}</span>
+                        </span>
+                      )}
+                      
+                      {data.tournament.venue && (
+                        <span className="flex items-center space-x-1.5">
+                          <i className="fa-solid fa-location-dot text-rose-400"></i>
+                          <span className="font-semibold text-slate-100">{data.tournament.venue}</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Compteurs statistiques */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 text-center min-w-[85px]">
+                      <span className="block text-2xl font-black text-white">{stats.total}</span>
+                      <span className="text-[10px] text-slate-400 uppercase font-bold">Total</span>
+                    </div>
+
+                    <div className="bg-amber-950/40 border border-amber-900/50 rounded-xl p-3 text-center min-w-[85px]">
+                      <span className="block text-2xl font-black text-amber-400">{stats.upcoming}</span>
+                      <span className="text-[10px] text-amber-300/80 uppercase font-bold">À venir</span>
+                    </div>
+
+                    <div className="bg-emerald-950/40 border border-emerald-900/50 rounded-xl p-3 text-center min-w-[85px]">
+                      <span className="block text-2xl font-black text-emerald-400">{stats.running}</span>
+                      <span className="text-[10px] text-emerald-300/80 uppercase font-bold">En cours</span>
+                    </div>
+
+                    <div className="bg-blue-950/40 border border-blue-900/50 rounded-xl p-3 text-center min-w-[85px]">
+                      <span className="block text-2xl font-black text-blue-400">{stats.finished}</span>
+                      <span className="text-[10px] text-blue-300/80 uppercase font-bold">Terminés</span>
+                    </div>
+                  </div>
+
+                </div>
+              </section>
+            )}
+
+            {/* Barre de Filtrage si des données existent */}
+            {data && data.matches && data.matches.length > 0 && (
+              <section className="glass-panel rounded-2xl p-4 sm:p-5 space-y-4 shadow-lg">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-felt-border/60 pb-3">
+                  <div className="flex items-center space-x-2 text-emerald-400 font-bold text-xs uppercase tracking-wider">
+                    <i className="fa-solid fa-filter"></i>
+                    <span>Filtrer les Matchs</span>
+                  </div>
+
+                  <div className="flex items-center space-x-3">
+                    {favTeam && (
+                      <button
+                        onClick={handleApplyFavorite}
+                        className={`text-xs px-2.5 py-1 rounded-lg border font-semibold transition flex items-center space-x-1.5 ${
+                          selectedTeam && selectedTeam.toLowerCase().includes(favTeam.toLowerCase())
+                            ? "bg-amber-500/20 text-amber-300 border-amber-500/50"
+                            : "bg-slate-900 text-slate-300 border-slate-700 hover:border-amber-500/50 hover:text-amber-300"
+                        }`}
+                        title="Appliquer le filtre sur mon équipe favorite"
+                      >
+                        <i className="fa-solid fa-star text-amber-400"></i>
+                        <span>Mon équipe : <strong>{favTeam}</strong></span>
+                      </button>
+                    )}
+
+                    {(selectedTeam || selectedVenue || selectedPlayer || selectedStatus !== "ALL" || searchTerm) && (
+                      <button
+                        onClick={handleResetFilters}
+                        className="text-xs text-slate-400 hover:text-white underline transition flex items-center space-x-1"
+                      >
+                        <i className="fa-solid fa-rotate-left"></i>
+                        <span>Réinitialiser les filtres</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+                  
+                  {/* Équipe */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-slate-300">
+                        Équipe / Club
+                      </label>
+                      {selectedTeam && (
+                        <button
+                          onClick={() => toggleFavoriteTeam(selectedTeam)}
+                          className={`text-[11px] flex items-center space-x-1 font-semibold ${
+                            favTeam === selectedTeam ? "text-amber-400" : "text-slate-500 hover:text-amber-400"
+                          }`}
+                          title={favTeam === selectedTeam ? "Définir comme favorite" : "Enregistrer comme équipe favorite"}
+                        >
+                          <i className={`fa-star ${favTeam === selectedTeam ? "fa-solid" : "fa-regular"}`}></i>
+                          <span>{favTeam === selectedTeam ? "Favori" : "Définir favori"}</span>
+                        </button>
+                      )}
+                    </div>
+                    <select
+                      value={selectedTeam}
+                      onChange={(e) => handleTeamChange(e.target.value)}
+                      className="w-full bg-slate-900 border border-felt-border rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+                    >
+                      <option value="">Toutes les équipes ({availableTeams.length})</option>
+                      {availableTeams.map((team, idx) => (
+                        <option key={idx} value={team}>
+                          {favTeam && team.toLowerCase().includes(favTeam.toLowerCase()) ? `⭐ ${team}` : team}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Lieu */}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      Lieu / Salle
+                    </label>
+                    <select
+                      value={selectedVenue}
+                      onChange={(e) => setSelectedVenue(e.target.value)}
+                      className="w-full bg-slate-900 border border-felt-border rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+                    >
+                      <option value="">Tous les lieux ({availableVenues.length})</option>
+                      {availableVenues.map((v, idx) => (
+                        <option key={idx} value={v}>{v}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Joueur */}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      Joueur
+                    </label>
+                    <select
+                      value={selectedPlayer}
+                      onChange={(e) => setSelectedPlayer(e.target.value)}
+                      className="w-full bg-slate-900 border border-felt-border rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+                    >
+                      <option value="">Tous les joueurs ({availablePlayers.length})</option>
+                      {availablePlayers.map((player, idx) => (
+                        <option key={idx} value={player}>{player}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Statut */}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      Statut du match
+                    </label>
+                    <select
+                      value={selectedStatus}
+                      onChange={(e) => setSelectedStatus(e.target.value)}
+                      className="w-full bg-slate-900 border border-felt-border rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-medium"
+                    >
+                      <option value="ALL">Tous les statuts</option>
+                      <option value="upcoming">À venir</option>
+                      <option value="running">En cours</option>
+                      <option value="finished">Terminés</option>
+                    </select>
+                  </div>
+
+                  {/* Recherche texte */}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      Recherche libre
+                    </label>
+                    <input
+                      type="text"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      placeholder="Nom, ville, adresse..."
+                      className="w-full bg-slate-900 border border-felt-border rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-felt-border/40 text-xs text-slate-400">
+                  <div>
+                    Affichage de <span className="font-bold text-emerald-400">{filteredMatches.length}</span> match(s).
+                  </div>
+
+                  <div className="flex items-center space-x-1 bg-slate-900 p-1 rounded-lg border border-felt-border">
+                    <button
+                      onClick={() => setViewMode("grid")}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition ${
+                        viewMode === "grid" ? "bg-emerald-600 text-slate-950 font-bold shadow" : "hover:text-white"
+                      }`}
+                    >
+                      <i className="fa-solid fa-grip-vertical mr-1"></i> Grille
+                    </button>
+                    <button
+                      onClick={() => setViewMode("timeline")}
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium transition ${
+                        viewMode === "timeline" ? "bg-emerald-600 text-slate-950 font-bold shadow" : "hover:text-white"
+                      }`}
+                    >
+                      <i className="fa-solid fa-timeline mr-1"></i> Chronologique
+                    </button>
+                  </div>
+                </div>
+
+              </section>
+            )}
+
+            {/* Liste / Grille des matchs */}
+            {data && data.matches && data.matches.length > 0 ? (
+              filteredMatches.length === 0 ? (
+                <div className="glass-panel rounded-2xl p-12 text-center space-y-3">
+                  <i className="fa-solid fa-calendar-xmark text-4xl text-slate-600"></i>
+                  <h3 className="text-lg font-bold text-slate-200">Aucun match ne correspond aux filtres</h3>
+                  <p className="text-slate-400 text-xs max-w-md mx-auto">
+                    Modifiez vos critères ou réinitialisez les filtres.
+                  </p>
+                  <button
+                    onClick={handleResetFilters}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold rounded-xl text-xs transition"
+                  >
+                    Réinitialiser les filtres
+                  </button>
+                </div>
+              ) : viewMode === "grid" ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {filteredMatches.map((match) => {
+                    const dt = formatFrenchDateTime(match.starttime);
+                    
+                    return (
+                      <div
+                        key={match.id}
+                        className="glass-panel hover:border-emerald-500/70 rounded-2xl p-5 transition duration-200 shadow-xl flex flex-col justify-between space-y-4 group"
+                      >
+                        <div className="flex items-start justify-between gap-3 border-b border-felt-border/60 pb-3">
+                          <div className="space-y-1">
+                            <span className="px-2 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-800/80 rounded text-[11px] font-mono font-semibold">
+                              {match.roundName}
+                            </span>
+                            
+                            <div className="text-base font-extrabold text-white flex items-center space-x-2 pt-0.5">
+                              <i className="fa-regular fa-calendar-days text-emerald-400"></i>
+                              <span>{dt.dateStr}</span>
+                            </div>
+                          </div>
+
+                          <div>
+                            {match.status === 'running' && (
+                              <span className="badge-live px-3 py-1 bg-emerald-500 text-slate-950 font-extrabold rounded-full text-xs flex items-center space-x-1 shadow-lg shadow-emerald-500/20">
+                                <span className="w-2 h-2 rounded-full bg-slate-950 animate-ping"></span>
+                                <span>EN COURS</span>
+                              </span>
+                            )}
+                            {match.status === 'finished' && (
+                              <span className="px-2.5 py-1 bg-slate-800 text-slate-300 border border-slate-700 rounded-full text-xs font-semibold">
+                                Terminé
+                              </span>
+                            )}
+                            {match.status === 'upcoming' && (
+                              <span className="px-2.5 py-1 bg-amber-950/80 text-amber-300 border border-amber-800/80 rounded-full text-xs font-semibold">
+                                À venir
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-900/90 rounded-xl p-3 border border-felt-border/80 space-y-1 text-xs">
+                          <div className="flex items-center justify-between text-slate-100 font-bold">
+                            <div className="flex items-center space-x-2 truncate">
+                              <a
+                                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(match.table?.venue?.address || match.table?.venue?.name)}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="Ouvrir dans Google Maps"
+                                className="text-rose-400 hover:text-rose-300 transition"
+                              >
+                                <i className="fa-solid fa-location-dot text-sm"></i>
+                              </a>
+                              <span className="truncate">{match.table?.venue?.name}</span>
+                              {match.table?.venue?.placename && (
+                                <span className="text-slate-400 font-normal">({match.table.venue.placename})</span>
+                              )}
+                            </div>
+                            
+                            <span className="bg-emerald-950 text-emerald-300 px-2 py-0.5 rounded border border-emerald-800 font-mono text-[11px] whitespace-nowrap ml-2">
+                              {match.table?.name}
+                            </span>
+                          </div>
+
+                          {match.table?.venue?.address && (
+                            <div className="text-[11px] text-slate-400 truncate pl-5">
+                              {match.table.venue.address}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-12 gap-2 items-center bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
+                          <div className="col-span-5 text-right space-y-1">
+                            <a
+                              href={match.playerA?.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`block hover:underline font-bold text-sm sm:text-base leading-snug ${match.status === 'finished' && match.scoreA > match.scoreB ? 'text-emerald-400 font-black' : 'text-slate-100'}`}
+                            >
+                              {match.playerA?.name}
+                            </a>
+                            {match.playerA?.player && (
+                              <div className="text-xs text-slate-400 truncate">
+                                <i className="fa-solid fa-user text-[10px] mr-1 text-slate-500"></i>
+                                {match.playerA.player}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="col-span-2 text-center flex flex-col items-center justify-center">
+                            {match.status === 'finished' || match.status === 'running' ? (
+                              <div className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-lg text-lg font-black tracking-tight text-white shadow-inner">
+                                {match.scoreA} - {match.scoreB}
+                              </div>
+                            ) : (
+                              <div className="text-xs font-bold text-amber-400 bg-amber-950/60 px-2 py-1 rounded-md border border-amber-900/60">
+                                {dt.timeStr}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="col-span-5 text-left space-y-1">
+                            <a
+                              href={match.playerB?.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`block hover:underline font-bold text-sm sm:text-base leading-snug ${match.status === 'finished' && match.scoreB > match.scoreA ? 'text-emerald-400 font-black' : 'text-slate-100'}`}
+                            >
+                              {match.playerB?.name}
+                            </a>
+                            {match.playerB?.player && (
+                              <div className="text-xs text-slate-400 truncate">
+                                <i className="fa-solid fa-user text-[10px] mr-1 text-slate-500"></i>
+                                {match.playerB.player}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
+                          <span className="flex items-center space-x-1">
+                            <i className="fa-regular fa-clock text-slate-500"></i>
+                            <span>Heure : <strong className="text-slate-200">{dt.timeStr}</strong></span>
+                          </span>
+                          
+                          <button
+                            onClick={() => setSelectedMatchModal(match)}
+                            className="text-emerald-400 hover:text-emerald-300 font-medium flex items-center space-x-1 transition"
+                          >
+                            <span>Détails</span>
+                            <i className="fa-solid fa-arrow-right text-[10px]"></i>
+                          </button>
+                        </div>
+
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="relative pl-6 border-l-2 border-felt-border space-y-6 my-4">
+                  {filteredMatches.map((match) => {
+                    const dt = formatFrenchDateTime(match.starttime);
+
+                    return (
+                      <div key={match.id} className="relative group">
+                        <div className={`absolute -left-[31px] top-4 w-4 h-4 rounded-full border-2 ${
+                          match.status === 'running' ? 'bg-emerald-500 border-emerald-300 animate-ping' :
+                          match.status === 'finished' ? 'bg-slate-700 border-slate-500' : 'bg-amber-500 border-amber-300'
+                        }`}></div>
+
+                        <div className="glass-panel rounded-2xl p-4 sm:p-5 transition shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          
+                          <div className="md:w-1/3 space-y-1 border-b md:border-b-0 md:border-r border-felt-border/60 pb-3 md:pb-0 md:pr-4">
+                            <div className="flex items-center space-x-2 text-xs font-semibold text-emerald-400">
+                              <span className="px-2 py-0.5 bg-emerald-950 rounded border border-emerald-800">{match.roundName}</span>
+                              <span>{dt.timeStr}</span>
+                            </div>
+                            
+                            <div className="text-base font-extrabold text-white">
+                              {dt.dateStr}
+                            </div>
+
+                            <div className="text-xs text-slate-300 flex items-center space-x-1 truncate">
+                              <i className="fa-solid fa-location-dot text-rose-400"></i>
+                              <span className="truncate font-semibold">{match.table?.venue?.name}</span>
+                              <span className="text-emerald-400 font-semibold">• {match.table?.name}</span>
+                            </div>
+                          </div>
+
+                          <div className="md:w-1/2 flex items-center justify-between space-x-3">
+                            <div className="text-right flex-1">
+                              <a href={match.playerA?.url} target="_blank" rel="noreferrer" className="font-bold text-slate-100 text-sm sm:text-base hover:underline">
+                                {match.playerA?.name}
+                              </a>
+                            </div>
+
+                            <div className="px-3 py-1 bg-slate-900 border border-slate-700 rounded-lg font-black text-slate-100 whitespace-nowrap">
+                              {match.status === 'finished' || match.status === 'running' ? `${match.scoreA} - ${match.scoreB}` : 'VS'}
+                            </div>
+
+                            <div className="text-left flex-1">
+                              <a href={match.playerB?.url} target="_blank" rel="noreferrer" className="font-bold text-slate-100 text-sm sm:text-base hover:underline">
+                                {match.playerB?.name}
+                              </a>
+                            </div>
+                          </div>
+
+                          <div className="md:w-1/6 text-right flex items-center justify-end space-x-2">
+                            <button
+                              onClick={() => setSelectedMatchModal(match)}
+                              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 rounded-lg text-xs font-semibold transition"
+                            >
+                              Détails
+                            </button>
+                          </div>
+
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            ) : null}
+
+          </main>
+
+          {/* Modale Détails du Match */}
+          {selectedMatchModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in">
+              <div className="glass-panel max-w-lg w-full rounded-2xl p-6 space-y-5 shadow-2xl relative border border-emerald-500/50">
+                
+                <button
+                  onClick={() => setSelectedMatchModal(null)}
+                  className="absolute top-4 right-4 text-slate-400 hover:text-white p-2 rounded-lg bg-slate-800 transition"
+                >
+                  <i className="fa-solid fa-xmark text-lg"></i>
+                </button>
+
+                <div className="space-y-1">
+                  <div className="flex items-center space-x-2">
+                    <span className="px-2.5 py-1 bg-emerald-950 text-emerald-400 border border-emerald-800 rounded text-xs font-mono font-semibold">
+                      {selectedMatchModal.roundName}
+                    </span>
+                    {selectedMatchModal.id && (
+                      <span className="px-2 py-0.5 bg-slate-800 text-slate-400 rounded text-[11px] font-mono">
+                        ID Match #{selectedMatchModal.id}
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="text-xl font-extrabold text-white pt-1">
+                    Fiche du Match & Convocation
+                  </h3>
+                </div>
+
+                <div className="bg-slate-900 rounded-xl p-4 border border-felt-border space-y-3">
+                  <div className="flex items-center space-x-3 text-slate-100">
+                    <div className="w-10 h-10 rounded-lg bg-emerald-950 border border-emerald-800 flex items-center justify-center text-emerald-400 text-lg">
+                      <i className="fa-regular fa-calendar-days"></i>
+                    </div>
+                    <div>
+                      <div className="text-[11px] text-slate-400 uppercase font-bold">Date & Convocation</div>
+                      <div className="font-extrabold text-sm sm:text-base">
+                        {formatFrenchDateTime(selectedMatchModal.starttime).dateStr} à {formatFrenchDateTime(selectedMatchModal.starttime).timeStr}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start space-x-3 text-slate-100 pt-3 border-t border-slate-800">
+                    <div className="w-10 h-10 rounded-lg bg-rose-950 border border-rose-800 flex items-center justify-center text-rose-400 text-lg mt-0.5">
+                      <i className="fa-solid fa-map-location-dot"></i>
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-[11px] text-slate-400 uppercase font-bold">Lieu & Table</div>
+                      <div className="font-extrabold text-sm sm:text-base text-white">
+                        {selectedMatchModal.table?.venue?.name}
+                      </div>
+                      {selectedMatchModal.table?.venue?.address && (
+                        <div className="text-xs text-slate-300 mt-0.5">
+                          {selectedMatchModal.table.venue.address}
+                        </div>
+                      )}
+                      <div className="text-xs text-emerald-400 font-bold mt-1">
+                        <i className="fa-solid fa-table-cells mr-1"></i>
+                        {selectedMatchModal.table?.name}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-950/70 p-4 rounded-xl border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-extrabold text-base text-white">
+                        {selectedMatchModal.playerA?.name}
+                      </div>
+                      {selectedMatchModal.playerA?.url && (
+                        <a 
+                          href={selectedMatchModal.playerA.url} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="text-[11px] text-emerald-400 hover:underline flex items-center space-x-1"
+                        >
+                          <i className="fa-solid fa-arrow-up-right-from-square"></i>
+                          <span>Voir sur CueScore</span>
+                        </a>
+                      )}
+                    </div>
+                    <div className="text-2xl font-black text-emerald-400">{selectedMatchModal.scoreA}</div>
+                  </div>
+
+                  <div className="text-center text-[10px] text-slate-500 font-bold uppercase tracking-widest border-t border-b border-slate-800 py-1">
+                    VS
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-extrabold text-base text-white">
+                        {selectedMatchModal.playerB?.name}
+                      </div>
+                      {selectedMatchModal.playerB?.url && (
+                        <a 
+                          href={selectedMatchModal.playerB.url} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="text-[11px] text-emerald-400 hover:underline flex items-center space-x-1"
+                        >
+                          <i className="fa-solid fa-arrow-up-right-from-square"></i>
+                          <span>Voir sur CueScore</span>
+                        </a>
+                      )}
+                    </div>
+                    <div className="text-2xl font-black text-emerald-400">{selectedMatchModal.scoreB}</div>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(selectedMatchModal.table?.venue?.address || selectedMatchModal.table?.venue?.name)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition"
+                    >
+                      <i className="fa-solid fa-location-arrow text-emerald-400"></i>
+                      <span>Google Maps</span>
+                    </a>
+
+                    <a
+                      href={selectedMatchModal.cuescoreUrl || `https://cuescore.com/match/?matchId=${selectedMatchModal.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-2 bg-emerald-950/90 hover:bg-emerald-900/90 text-emerald-300 border border-emerald-700/60 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition shadow"
+                    >
+                      <i className="fa-solid fa-trophy text-emerald-400"></i>
+                      <span>Match CueScore</span>
+                      <i className="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                    </a>
+                  </div>
+
+                  <button
+                    onClick={() => setSelectedMatchModal(null)}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold rounded-xl text-xs transition"
+                  >
+                    Fermer
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+          {/* Footer */}
+          <footer className="border-t border-felt-border bg-[#040806] py-4 text-center text-xs text-slate-500">
+            <p>CueScore Explorer • Visualiseur officiel de matchs & compétitions de billard</p>
+          </footer>
+
+        </div>
+      );
+    }
+
+    const rootElement = document.getElementById('root');
+    const root = ReactDOM.createRoot(rootElement);
+    root.render(<App />);
+  </script>
+</body>
+</html>
