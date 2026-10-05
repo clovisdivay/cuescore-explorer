@@ -291,23 +291,29 @@
 
       // Auto-résolution intelligente du nom de l'équipe à partir des données chargées
       useEffect(() => {
-        if (data && data.matches && favTeam) {
-          const cleanFav = favTeam.trim().toLowerCase();
-          const teamsSet = new Set();
-          data.matches.forEach(m => {
-            if (m.playerA?.name) teamsSet.add(m.playerA.name);
-            if (m.playerB?.name) teamsSet.add(m.playerB.name);
-          });
-          const allTeams = Array.from(teamsSet);
-          // Match exact ou partiel
-          const match = allTeams.find(t => t.toLowerCase().includes(cleanFav) || cleanFav.includes(t.toLowerCase()));
-          if (match) {
-            setSelectedTeam(match);
+        if (data && data.matches) {
+          if (favTeam) {
+            const cleanFav = favTeam.trim().toLowerCase();
+            const teamsSet = new Set();
+            data.matches.forEach(m => {
+              if (m.playerA?.name) teamsSet.add(m.playerA.name);
+              if (m.playerB?.name) teamsSet.add(m.playerB.name);
+            });
+            const allTeams = Array.from(teamsSet);
+            // Match exact ou partiel
+            const match = allTeams.find(t => t.toLowerCase().includes(cleanFav) || cleanFav.includes(t.toLowerCase()));
+            if (match) {
+              setSelectedTeam(match);
+            } else {
+              // L'équipe favorite n'est pas dans ce tournoi : afficher toutes les équipes
+              setSelectedTeam("");
+            }
           } else {
-            setSelectedTeam(favTeam);
+            setSelectedTeam("");
           }
         }
       }, [data, favTeam]);
+
 
       const handleTeamChange = (teamName) => {
         setSelectedTeam(teamName);
