@@ -346,6 +346,9 @@
         setIsLoadingTournament(true);
         setApiError(null);
         setApiSuccessMsg(null);
+        
+        // Réinitialisation des filtres actifs lors du changement de tournoi
+        handleResetFilters();
 
         const targetUrl = `https://api.cuescore.com/tournament/?id=${encodeURIComponent(cleanId)}`;
         const fetchUrls = [
