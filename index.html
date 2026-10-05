@@ -485,8 +485,13 @@
             return true;
           })
           .sort((a, b) => {
-            const timeA = new Date(a.starttime).getTime() || 0;
-            const timeB = new Date(b.starttime).getTime() || 0;
+            const dateA = new Date(a.starttime).getTime();
+            const dateB = new Date(b.starttime).getTime();
+            
+            // Les dates absentes, invalides ou indéfinies sont envoyées à la fin de la liste
+            const timeA = isNaN(dateA) || dateA === 0 ? Infinity : dateA;
+            const timeB = isNaN(dateB) || dateB === 0 ? Infinity : dateB;
+            
             return timeA - timeB;
           });
       }, [data, selectedTeam, selectedVenue, selectedPlayer, selectedStatus, searchTerm]);
